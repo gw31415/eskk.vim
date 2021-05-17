@@ -402,6 +402,8 @@ function! s:asym_filter(stash) abort "{{{
         endif
     endfor
 
+    let mappings = eskk#_get_eskk_mappings()
+    let sticky_char = get(mappings.sticky, 'lhs', '')
 
     " Handle specific characters.
     " These characters are handled regardless of current phase.
@@ -411,7 +413,7 @@ function! s:asym_filter(stash) abort "{{{
     elseif char ==# "\<CR>"
         call s:do_enter(a:stash)
         return
-    elseif char ==# ';'
+    elseif char ==# sticky_char
         call s:do_sticky(a:stash)
         return
     elseif char ==# "\<C-g>"
@@ -1185,7 +1187,14 @@ function! s:filter_rom_no_match(stash, table) abort "{{{
         call buf_str.rom_pairs.push_one_pair(char, map, {'converted': 1})
         call buf_str.rom_str.clear()
     else
-        call buf_str.rom_str.set(char)
+        " If typed character isn't a Roman character, it will be confirmed.
+        " Because it will be removed in a later phase.
+        if empty(a:table.get_candidates(char, [])) && g:eskk#rom_input_style ==# 'skk'
+            call buf_str.rom_pairs.push_one_pair(char, char)
+            call buf_str.rom_str.clear()
+        else
+            call buf_str.rom_str.set(char)
+        endif
     endif
 endfunction "}}}
 
@@ -1285,10 +1294,15 @@ endfunction "}}}
 
 " Preprocessor
 function! s:asym_prefilter(stash) abort "{{{
+    let mappings = eskk#_get_eskk_mappings()
+    let sticky_char = get(mappings.sticky, 'lhs', '')
+
     let char = a:stash.char
-    " 'X' is phase:henkan-select:delete-from-dict
-    " 'L' is mode:{hira,kata,hankata}:to-zenei
-    if char ==# 'X' || char ==# 'L'
+    if char ==# sticky_char
+        return [sticky_char]
+    elseif char ==# 'X' || char ==# 'L'
+        " 'X' is phase:henkan-select:delete-from-dict
+        " 'L' is mode:{hira,kata,hankata}:to-zenei
         return [char]
     elseif char =~# '^[A-Z]$'
         " Treat uppercase "A" in "SAkujo" as lowercase.
@@ -1303,7 +1317,7 @@ function! s:asym_prefilter(stash) abort "{{{
         if !buf_str.rom_str.empty() && buf_str.rom_pairs.empty()
             return [tolower(char)]
         else
-            return [';', tolower(char)]
+            return [sticky_char, tolower(char)]
         endif
     elseif char ==# "\<BS>"
         return ["\<C-h>"]
@@ -1831,6 +1845,11 @@ function! eskk#enable() abort "{{{
         redrawstatus
         let ret = ''
     endif
+
+    " Specify the "keymap" name
+    " https://github.com/neovim/neovim/blob/v0.4.4/runtime/doc/insert.txt#L230-L231
+    let b:keymap_name = 'eskk'
+
     if exists('#User#eskk-enable-post')
         doautocmd User eskk-enable-post
     endif
@@ -2129,8 +2148,10 @@ function! eskk#filter(char) abort "{{{
                 " NOTE: Vim can't escape lang-mode immediately
                 " in insert-mode or commandline-mode.
                 " We have to use i_CTRL-^ .
-                let kakutei_str = preedit.generate_kakutei_str()
-                return kakutei_str . "\<C-^>"
+                let str = eskk#get_preedit().rewrite()
+                let str .= preedit.generate_kakutei_str()
+                let str .= "\<C-^>"
+                return str
             endif
         endwhile
 
